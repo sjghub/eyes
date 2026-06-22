@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: eyes
+  datasource:
+    url: jdbc:postgresql://aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres
+    username: postgres.gycrgtbpimcpctsxdqyr
+    password: O29CiAmvQNK2daue
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+
+server:
+  port: ${PORT:8080}

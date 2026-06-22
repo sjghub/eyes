@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta property="og:title" content="비전블루 안과 찾기">
+<meta property="og:description" content="비전블루 안과 찾기 ">
+<title>비전블루 리스트</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<div class="header">비전블루 리스트</div>
+
+<div class="container">
+
+
+  <div class="map-section">
+    <div class="map-container" id="mapContainer"></div>
+    <div class="buttons-panel">
+      <h3>비전블루 안과찾기</h3>
+      <div class="region-buttons" id="regionButtons"></div>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <label>시/도</label>
+    <select id="filterRegion">
+      <option value="">전체</option>
+    </select>
+    <label>시/군/구</label>
+    <select id="filterDistrict">
+      <option value="">전체</option>
+    </select>
+    <label>우선순위</label>
+    <select id="filterPriority">
+      <option value="">전체</option>
+      <option value="JMC">JMC</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+      <option value="5">5</option>
+    </select>
+    <label>병원명/의료진명</label>
+    <div class="btn-group">
+      <input type="text" id="filterKeyword" placeholder="병원명 또는 의료진명 입력">
+      <button class="search-btn" id="searchBtn">검색</button>
+      <button class="reset-btn" id="resetBtn">초기화</button>
+    </div>
+    <label>비고</label>
+    <input type="text" id="filterNote" placeholder="비고 내용 입력">
+  </div>
+
+  <div class="result-count" id="resultCount"></div>
+
+  <div class="table-section">
+    <table>
+      <thead>
+        <tr>
+          <th>No</th>
+          <th>시/구</th>
+          <th>병원명</th>
+          <th>의료진명</th>
+          <th>주소</th>
+          <th>전화번호</th>
+          <th>비고</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<!-- <div class="footer">
+  &copy; 비전블루 안과찾기
+</div> -->
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+<script>
+(function() {
+  const REGIONS = ['서울','경기','인천','충북','충남','세종','광주','전북','전남','제주','대전','대구','부산','울산','경북','경남','강원'];
+  const PER_PAGE = 10;
+
+  let HOSPITALS = [];
+  let currentRegion = null;
+  let currentDistrict = null;
+  let currentPriority = null;
+  let currentKeyword = '';
+  let currentNote = '';
+  let currentPage = 1;
+  let filtered = [];
+
+  const elFilterRegion = document.getElementById('filterRegion');
+  const elFilterDistrict = document.getElementById('filterDistrict');
+  const elFilterPriority = document.getElementById('filterPriority');
+  const elFilterKeyword = document.getElementById('filterKeyword');
+  const elFilterNote = document.getElementById('filterNote');
+  const elResultCount = document.getElementById('resultCount');
+
+  REGIONS.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r; opt.textContent = r;
+    elFilterRegion.appendChild(opt);
+  });
+
+  elFilterRegion.addEventListener('change', () => {
+    const region = elFilterRegion.value;
+    currentRegion = region || null;
+    currentDistrict = null;
+    elFilterDistrict.value = '';
+    populateDistricts(region);
+    syncRegionUI();
+    currentPage = 1;
+    applyFilters();
+  });
+
+  elFilterDistrict.addEventListener('change', () => {
+    currentDistrict = elFilterDistrict.value || null;
+    currentPage = 1;
+    applyFilters();
+  });
+
+  elFilterPriority.addEventListener('change', () => {
+    currentPriority = elFilterPriority.value || null;
+    currentPage = 1;
+    applyFilters();
+  });
+
+  document.getElementById('searchBtn').addEventListener('click', () => {
+    currentKeyword = elFilterKeyword.value.trim();
+    currentPage = 1;
+    applyFilters();
+  });
+
+  elFilterKeyword.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      currentKeyword = elFilterKeyword.value.trim();
+      currentPage = 1;
+      applyFilters();
+    }
+  });
+
+  elFilterNote.addEventListener('input', () => {
+    currentNote = elFilterNote.value.trim();
+    currentPage = 1;
+    applyFilters();
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    currentRegion = null; currentDistrict = null;
+    currentPriority = null; currentKeyword = ''; currentNote = '';
+    currentPage = 1;
+    elFilterRegion.value = '';
+    elFilterDistrict.innerHTML = '<option value="">전체</option>';
+    elFilterPriority.value = '';
+    elFilterKeyword.value = '';
+    elFilterNote.value = '';
+    syncRegionUI();
+    applyFilters();
+  });
+
+  function populateDistricts(region) {
+    elFilterDistrict.innerHTML = '<option value="">전체</option>';
+    if (!region) return;
+    const districts = [...new Set(HOSPITALS.filter(h => h.region === region).map(h => h.district))].sort();
+    districts.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d; opt.textContent = d;
+      elFilterDistrict.appendChild(opt);
+    });
+  }
+
+  const NAME_MAP = {
+    '서울특별시': '서울', '경기도': '경기', '인천광역시': '인천',
+    '충청북도': '충북', '충청남도': '충남', '세종특별자치시': '세종',
+    '광주광역시': '광주', '전라북도': '전북', '전라남도': '전남',
+    '제주특별자치도': '제주', '대전광역시': '대전', '대구광역시': '대구',
+    '부산광역시': '부산', '울산광역시': '울산', '경상북도': '경북',
+    '경상남도': '경남', '강원도': '강원',
+  };
+  const REGION_COLORS = {
+    '서울': '#ffcccc', '경기': '#ffe0cc', '인천': '#fff2cc',
+    '강원': '#ccffcc', '충북': '#ccffe0', '충남': '#ccffff',
+    '세종': '#cce0ff', '대전': '#ccccff', '전북': '#e0ccff',
+    '전남': '#ffccff', '광주': '#ffcce0', '경북': '#e8e8cc',
+    '경남': '#d4e8cc', '대구': '#cce8d4', '부산': '#ccd4e8',
+    '울산': '#d4cce8', '제주': '#e8ccd4',
+  };
+
+  fetch('korea-topo.json')
+    .then(r => r.json())
+    .then(topo => {
+      const geojson = topojson.feature(topo, topo.objects.skorea_provinces_geo);
+      const width = 300, height = 380;
+      const svg = d3.select('#mapContainer').append('svg')
+        .attr('viewBox', `0 0 ${width} ${height}`).attr('width', '100%');
+      const projection = d3.geoMercator().center([127.5, 36.0]).scale(3800).translate([width / 2, height / 2]);
+      const path = d3.geoPath().projection(projection);
+
+      svg.selectAll('path').data(geojson.features).enter().append('path')
+        .attr('class', 'region').attr('d', path)
+        .attr('data-region', d => NAME_MAP[d.properties.name] || d.properties.name)
+        .attr('fill', d => REGION_COLORS[NAME_MAP[d.properties.name]] || '#e8f4e8')
+        .on('click', (event, d) => { selectRegion(NAME_MAP[d.properties.name]); });
+
+      const LABEL_OFFSET = { '경기': [12, 18], '세종': [0, -8], '대전': [0, 6], '서울': [-2, -2], '인천': [-10, 0] };
+      svg.selectAll('text').data(geojson.features).enter().append('text')
+        .attr('class', 'region-label')
+        .attr('x', d => { const name = NAME_MAP[d.properties.name]; const off = LABEL_OFFSET[name] || [0,0]; return path.centroid(d)[0] + off[0]; })
+        .attr('y', d => { const name = NAME_MAP[d.properties.name]; const off = LABEL_OFFSET[name] || [0,0]; return path.centroid(d)[1] + off[1]; })
+        .text(d => NAME_MAP[d.properties.name] || d.properties.name);
+    });
+
+  const btnContainer = document.getElementById('regionButtons');
+  REGIONS.forEach(region => {
+    const btn = document.createElement('button');
+    btn.className = 'region-btn'; btn.textContent = region;
+    btn.addEventListener('click', () => selectRegion(region));
+    btnContainer.appendChild(btn);
+  });
+
+  function selectRegion(region) {
+    if (currentRegion === region) {
+      currentRegion = null; currentDistrict = null;
+      elFilterRegion.value = '';
+      elFilterDistrict.innerHTML = '<option value="">전체</option>';
+    } else {
+      currentRegion = region; currentDistrict = null;
+      elFilterRegion.value = region;
+      populateDistricts(region);
+    }
+    currentPage = 1;
+    syncRegionUI();
+    applyFilters();
+  }
+
+  function syncRegionUI() {
+    document.querySelectorAll('.region-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.textContent === currentRegion);
+    });
+    document.querySelectorAll('#mapContainer .region').forEach(el => {
+      const r = el.getAttribute('data-region');
+      if (r === currentRegion) { el.classList.add('active'); }
+      else { el.classList.remove('active'); el.setAttribute('fill', REGION_COLORS[r] || '#e8f4e8'); }
+    });
+  }
+
+  function applyFilters() {
+    filtered = HOSPITALS;
+    if (currentRegion) filtered = filtered.filter(h => h.region === currentRegion);
+    if (currentDistrict) filtered = filtered.filter(h => h.district === currentDistrict);
+    if (currentPriority) filtered = filtered.filter(h => h.priority === currentPriority);
+    if (currentKeyword) {
+      const kw = currentKeyword.toLowerCase();
+      filtered = filtered.filter(h => h.name.toLowerCase().includes(kw) || h.doctor.toLowerCase().includes(kw));
+    }
+    if (currentNote) {
+      const kw = currentNote.toLowerCase();
+      filtered = filtered.filter(h => (h.note || '').toLowerCase().includes(kw));
+    }
+    elResultCount.textContent = `검색 결과: ${filtered.length}개 병원`;
+    renderTable();
+    renderPagination();
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('tableBody');
+    const start = (currentPage - 1) * PER_PAGE;
+    const pageData = filtered.slice(start, start + PER_PAGE);
+
+    if (pageData.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="padding:20px;color:#999;">데이터가 없습니다.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = pageData.map((h, i) => {
+      const note = h.note || '';
+      const escaped = note.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+      return `
+      <tr>
+        <td>${start + i + 1}</td>
+        <td>${h.district}</td>
+        <td>${h.name}</td>
+        <td>${h.doctor}</td>
+        <td>${h.address}</td>
+        <td>${h.phone}</td>
+        <td class="note-cell" data-id="${h.id}" title="클릭하여 편집">${escaped || '<span class="note-placeholder">메모 추가</span>'}</td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('.note-cell').forEach(td => {
+      td.addEventListener('click', function() {
+        if (td.querySelector('input')) return;
+        const id = parseInt(td.getAttribute('data-id'));
+        const hospital = HOSPITALS.find(h => h.id === id);
+        const current = hospital?.note || '';
+        td.innerHTML = `<input type="text" class="note-input" value="${current.replace(/"/g, '&quot;')}" placeholder="비고 입력 후 Enter">`;
+        const input = td.querySelector('input');
+        input.focus();
+
+        let saved = false;
+        function saveNote() {
+          if (saved) return;
+          saved = true;
+          const text = input.value.trim();
+          if (hospital) hospital.note = text || null;
+          fetch(`/api/hospitals/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: text || null }),
+          }).then(res => { if (!res.ok) alert('저장 실패'); });
+          if (text) {
+            td.textContent = text;
+          } else {
+            td.innerHTML = '<span class="note-placeholder">메모 추가</span>';
+          }
+        }
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { input.blur(); }
+          if (e.key === 'Escape') {
+            saved = true;
+            td.innerHTML = current ? current.replace(/</g, '&lt;') : '<span class="note-placeholder">메모 추가</span>';
+          }
+        });
+        input.addEventListener('blur', saveNote);
+      });
+    });
+  }
+
+  function renderPagination() {
+    const container = document.getElementById('pagination');
+    const totalPages = Math.ceil(filtered.length / PER_PAGE);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+    const maxVisible = 10;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage + 1 < maxVisible) startPage = Math.max(1, endPage - maxVisible + 1);
+
+    let html = `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}">&lt;</button>`;
+    for (let i = startPage; i <= endPage; i++) {
+      html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
+    }
+    html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} data-page="${currentPage + 1}">&gt;</button>`;
+    container.innerHTML = html;
+
+    container.querySelectorAll('.page-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const page = parseInt(btn.getAttribute('data-page'));
+        if (page >= 1 && page <= totalPages) {
+          currentPage = page;
+          renderTable();
+          renderPagination();
+          document.querySelector('.table-section').scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+  }
+
+  async function loadHospitals() {
+    elResultCount.textContent = '데이터 로딩 중...';
+    const res = await fetch('/api/hospitals');
+    if (!res.ok) { alert('데이터 로드 실패'); return; }
+    HOSPITALS = await res.json();
+    applyFilters();
+  }
+
+  loadHospitals();
+})();
+</script>
+
+</body>
+</html>
